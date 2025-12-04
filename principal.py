@@ -66,7 +66,8 @@ st.dataframe(df_raw.head())
 # ============================================================
 
 required_base = ["Conta", "Produto", "Ativo"]
-value_cols = ["Valor Bruto - Curva Cliente", "Valor Líquido - Curva Cliente"]
+# Agora trabalhamos com os dois brutos
+value_cols = ["Valor Bruto - Curva Cliente", "Valor Bruto - Curva Mercado"]
 
 missing_base = [c for c in required_base if c not in df_raw.columns]
 if missing_base:
@@ -76,7 +77,7 @@ if missing_base:
     st.stop()
 
 if all(c not in df_raw.columns for c in value_cols):
-    st.error("Não encontrei nenhuma coluna de valor bruto ou líquido pela nomenclatura padrão.")
+    st.error("Não encontrei nenhuma coluna de valor bruto pela nomenclatura padrão.")
     st.write("Esperadas:", value_cols)
     st.write("Colunas disponíveis:", list(df_raw.columns))
     st.stop()
@@ -87,8 +88,10 @@ rename_dict = {
     "Emissor": "emissor",
     "Produto": "tipo_produto",
     "Ativo": "ativo",
-    "Valor Bruto - Curva Cliente": "valor_bruto",
-    "Valor Líquido - Curva Cliente": "valor_liquido",
+    "Valor Bruto - Curva Cliente": "valor_bruto_cliente",
+    "Valor Bruto - Curva Mercado": "valor_bruto_mercado",
+    # Mantemos o líquido mapeado caso queira usar depois, mas ele não entra no cálculo
+    "Valor Líquido - Curva Cliente": "valor_liquido_cliente",
 }
 
 df = df_raw.rename(columns={k: v for k, v in rename_dict.items() if k in df_raw.columns})
@@ -96,32 +99,36 @@ df = df_raw.rename(columns={k: v for k, v in rename_dict.items() if k in df_raw.
 if "cliente" not in df.columns:
     df["cliente"] = ""
 
-if "valor_bruto" not in df.columns:
-    df["valor_bruto"] = pd.NA
-if "valor_liquido" not in df.columns:
-    df["valor_liquido"] = pd.NA
+if "valor_bruto_cliente" not in df.columns:
+    df["valor_bruto_cliente"] = pd.NA
+if "valor_bruto_mercado" not in df.columns:
+    df["valor_bruto_mercado"] = pd.NA
+if "valor_liquido_cliente" not in df.columns:
+    df["valor_liquido_cliente"] = pd.NA
 
-df["valor_bruto"] = pd.to_numeric(df["valor_bruto"], errors="coerce")
-df["valor_liquido"] = pd.to_numeric(df["valor_liquido"], errors="coerce")
+df["valor_bruto_cliente"] = pd.to_numeric(df["valor_bruto_cliente"], errors="coerce")
+df["valor_bruto_mercado"] = pd.to_numeric(df["valor_bruto_mercado"], errors="coerce")
+df["valor_liquido_cliente"] = pd.to_numeric(df["valor_liquido_cliente"], errors="coerce")
 
 # Data ref igual para todas as linhas
 df["data_ref"] = pd.to_datetime(data_ref_input)
 
 # ============================================================
 # Regra de escolha do valor de RF
+# Sempre valor bruto, escolhendo entre curva cliente e curva mercado
 # ============================================================
 
 def escolher_valor_rf(row):
-    vb = row["valor_bruto"]
-    vl = row["valor_liquido"]
+    vb_cli = row["valor_bruto_cliente"]
+    vb_mer = row["valor_bruto_mercado"]
 
-    if pd.isna(vb) and pd.isna(vl):
+    if pd.isna(vb_cli) and pd.isna(vb_mer):
         return 0.0
-    if pd.isna(vb):
-        return vl
-    if pd.isna(vl):
-        return vb
-    return min(vb, vl)
+    if pd.isna(vb_cli):
+        return vb_mer
+    if pd.isna(vb_mer):
+        return vb_cli
+    return min(vb_cli, vb_mer)
 
 
 df["valor_rf"] = df.apply(escolher_valor_rf, axis=1)
@@ -204,6 +211,7 @@ with m3:
 
 st.divider()
 
+# Agora com a aba Por emissor
 aba_prod, aba_classe, aba_emissor, aba_hist = st.tabs(
     ["Por produto", "Por classe", "Por emissor", "Histórico"]
 )
@@ -314,7 +322,6 @@ with aba_emissor:
             grp_emissor_sorted.set_index("emissor")["auc_rf"],
             use_container_width=True,
         )
-
 
 # ============================================================
 # Aba: Histórico
