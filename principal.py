@@ -130,26 +130,40 @@ data_ref_unica = df["data_ref"].max()
 st.write(f"**Data de referência da posição:** {data_ref_unica.date()}")
 
 # ============================================================
-# Classificação por classe
+# Classificação por classe usando a lista final de produtos
 # ============================================================
 
-BANCARIOS = {"CDB", "LCA", "LCI", "LC", "LIG", "LCD"}
-CREDITO_PRIVADO = {"CRA", "CRI", "CDCA", "DEBENTURE", "DEBÊNTURE"}
-TITULOS_PUBLICOS = {"LFT", "LTN", "NTNB", "NTNF", "NTNB-P", "NTNBP", "NTNB1"}
-BANCARIOS_EX_FGC = {"LF", "LFSN", "LFSC"}
+TESOURO_PREFIX = "TESOURO DIRETO"
+
+BANCARIOS = {
+    "CDB", "LCA", "LCI", "LC", "LIG", "LCD"
+}
+
+CREDITO_PRIVADO = {
+    "CRA", "CRI", "CDCA", "DEBENTURE", "DEBÊNTURE"
+}
+
+TPF = {
+    "NTNB", "LFT", "NTNF", "NTNB-P", "LTN"
+}
+
+BANCARIOS_EX_FGC = {
+    "LF", "LFSN", "LFSC"
+}
 
 def classificar_linha(tipo_produto, nome_ativo):
     tp = str(tipo_produto).upper().strip()
-    nome = str(nome_ativo).upper()
+    nome = str(nome_ativo).upper().strip()
 
-    if "TESOURO DIRETO" in nome:
+    # Tesouro Direto
+    if TESOURO_PREFIX in tp or TESOURO_PREFIX in nome:
         return "Tesouro"
 
     if tp in BANCARIOS:
         return "Bancário"
     if tp in CREDITO_PRIVADO:
         return "Crédito Privado"
-    if tp in TITULOS_PUBLICOS:
+    if tp in TPF:
         return "TPF"
     if tp in BANCARIOS_EX_FGC:
         return "Bancário ex-FGC"
