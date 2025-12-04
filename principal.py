@@ -212,8 +212,10 @@ with m3:
 st.divider()
 
 # Agora com a aba Por emissor
-aba_prod, aba_classe, aba_emissor, aba_hist = st.tabs(
-    ["Por produto", "Por classe", "Por emissor", "Histórico"]
+aba_prod, aba_classe, aba_emissor, aba_emissor_exfgc, aba_hist = st.tabs(
+    ["Por produto", "Por classe", "Por emissor", "Por emissor ex-FGC", "Histórico"]
+)
+
 )
 
 # ============================================================
@@ -320,6 +322,62 @@ with aba_emissor:
 
         st.bar_chart(
             grp_emissor_sorted.set_index("emissor")["auc_rf"],
+            use_container_width=True,
+        )
+
+# ============================================================
+# Aba: Por emissor ex-FGC (classe Bancário ex-FGC)
+# ============================================================
+
+with aba_emissor_exfgc:
+    st.subheader("AuC de Renda Fixa por emissor - Bancário ex-FGC")
+
+    df_ex = df[df["classe_rf"] == "Bancário ex-FGC"].copy()
+
+    if df_ex.empty:
+        st.info("Não há ativos classificados como 'Bancário ex-FGC' na posição atual.")
+    else:
+        total_exfgc = df_ex["valor_rf"].sum()
+
+        grp_emissor_ex = (
+            df_ex.groupby("emissor", dropna=False)["valor_rf"]
+            .sum()
+            .reset_index()
+            .rename(columns={"valor_rf": "auc_rf"})
+        )
+
+        # Percentual dentro do estoque total de RF
+        grp_emissor_ex["pct_estoque_rf"] = (
+            grp_emissor_ex["auc_rf"] / total_rf * 100 if total_rf > 0 else 0.0
+        )
+
+        # Percentual dentro do estoque apenas de Bancário ex-FGC
+        grp_emissor_ex["pct_estoque_exfgc"] = (
+            grp_emissor_ex["auc_rf"] / total_exfgc * 100 if total_exfgc > 0 else 0.0
+        )
+
+        # Percentual sobre o AuC total da Convexa
+        grp_emissor_ex["pct_auc_convexa"] = (
+            grp_emissor_ex["auc_rf"] / auc_total_convexa * 100
+            if auc_total_convexa > 0
+            else 0.0
+        )
+
+        grp_emissor_ex_sorted = grp_emissor_ex.sort_values("auc_rf", ascending=False)
+
+        st.dataframe(
+            grp_emissor_ex_sorted.style.format(
+                {
+                    "auc_rf": lambda v: formata_moeda(v),
+                    "pct_estoque_rf": "{:.2f}%".format,
+                    "pct_estoque_exfgc": "{:.2f}%".format,
+                    "pct_auc_convexa": "{:.2f}%".format,
+                }
+            )
+        )
+
+        st.bar_chart(
+            grp_emissor_ex_sorted.set_index("emissor")["auc_rf"],
             use_container_width=True,
         )
 
