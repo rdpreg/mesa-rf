@@ -216,7 +216,6 @@ aba_prod, aba_classe, aba_emissor, aba_emissor_exfgc, aba_hist = st.tabs(
     ["Por produto", "Por classe", "Por emissor", "Por emissor ex-FGC", "Histórico"]
 )
 
-)
 
 # ============================================================
 # Aba: Por produto
