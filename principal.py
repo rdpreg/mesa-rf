@@ -95,10 +95,18 @@ df = df_raw.rename(columns={
     col_valor_liquido: "valor_liquido",
 })
 
+# Garante que as colunas de valor existam mesmo que não tenham sido mapeadas
+if "valor_bruto" not in df.columns:
+    df["valor_bruto"] = pd.NA
+
+if "valor_liquido" not in df.columns:
+    df["valor_liquido"] = pd.NA
+
 # Conversões básicas
 df["data_ref"] = pd.to_datetime(df["data_ref"], errors="coerce")
 df["valor_bruto"] = pd.to_numeric(df["valor_bruto"], errors="coerce")
 df["valor_liquido"] = pd.to_numeric(df["valor_liquido"], errors="coerce")
+
 
 # Escolha do valor de RF usando a regra:
 # - Se as duas colunas tiverem valor, usar o menor
