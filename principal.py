@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
-from datetime import datetime
+from datetime import datetime, date
 
 HIST_FILE = "historico_rf.parquet"
 
@@ -13,6 +13,12 @@ st.set_page_config(
 st.title("Painel de Estoque de Renda Fixa")
 
 st.sidebar.header("Configurações")
+
+# Data de referência da posição
+data_ref_input = st.sidebar.date_input(
+    "Data de referência da posição",
+    value=date.today()
+)
 
 # AuC total da Convexa informado manualmente
 auc_total_convexa = st.sidebar.number_input(
@@ -39,79 +45,72 @@ if uploaded_file is None:
     st.info("Envie o arquivo de posição de renda fixa para iniciar a análise.")
     st.stop()
 
-# ===================================================================
-# Carregamento do arquivo
-# ===================================================================
 
 @st.cache_data
 def load_data(file):
     name = file.name.lower()
     if name.endswith(".csv"):
-        # Ajuste se o separador do seu arquivo for outro
         df = pd.read_csv(file, sep=";", decimal=",")
     else:
-        df = pd.read_excel(file)
+        df = pd.read_excel(file, engine="openpyxl")
     return df
+
 
 df_raw = load_data(uploaded_file)
 
 st.subheader("Pré visualização dos dados")
 st.dataframe(df_raw.head())
 
-# ===================================================================
-# Mapeamento de colunas
-# ===================================================================
+# ============================================================
+# Validação e renomeação de colunas padrão BTG
+# ============================================================
 
-st.markdown("### Mapeamento de colunas")
+required_base = ["Conta", "Produto", "Ativo"]
+value_cols = ["Valor Bruto - Curva Cliente", "Valor Líquido - Curva Cliente"]
 
-colunas = list(df_raw.columns)
+missing_base = [c for c in required_base if c not in df_raw.columns]
+if missing_base:
+    st.error("As seguintes colunas obrigatórias não foram encontradas no arquivo:")
+    st.write(missing_base)
+    st.write("Colunas disponíveis:", list(df_raw.columns))
+    st.stop()
 
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    col_data_ref = st.selectbox("Coluna de data de referência", colunas)
-with c2:
-    col_conta = st.selectbox("Coluna de conta", colunas)
-with c3:
-    col_cliente = st.selectbox("Coluna de cliente (opcional)", colunas)
-with c4:
-    col_ativo = st.selectbox("Coluna de nome do ativo", colunas)
+if all(c not in df_raw.columns for c in value_cols):
+    st.error("Não encontrei nenhuma coluna de valor bruto ou líquido pela nomenclatura padrão.")
+    st.write("Esperadas:", value_cols)
+    st.write("Colunas disponíveis:", list(df_raw.columns))
+    st.stop()
 
-c5, c6, c7 = st.columns(3)
-with c5:
-    col_tipo_produto = st.selectbox("Coluna de tipo de produto", colunas)
-with c6:
-    col_valor_bruto = st.selectbox("Coluna Valor Bruto - Curva Cliente", colunas)
-with c7:
-    col_valor_liquido = st.selectbox("Coluna Valor Líquido - Curva Cliente", colunas)
+rename_dict = {
+    "Conta": "conta",
+    "Nome": "cliente",
+    "Emissor": "emissor",
+    "Produto": "tipo_produto",
+    "Ativo": "ativo",
+    "Valor Bruto - Curva Cliente": "valor_bruto",
+    "Valor Líquido - Curva Cliente": "valor_liquido",
+}
 
-# Renomeia para padrão interno
-df = df_raw.rename(columns={
-    col_data_ref: "data_ref",
-    col_conta: "conta",
-    col_cliente: "cliente",
-    col_ativo: "ativo",
-    col_tipo_produto: "tipo_produto",
-    col_valor_bruto: "valor_bruto",
-    col_valor_liquido: "valor_liquido",
-})
+df = df_raw.rename(columns={k: v for k, v in rename_dict.items() if k in df_raw.columns})
 
-# Garante que as colunas de valor existam mesmo que não tenham sido mapeadas
+if "cliente" not in df.columns:
+    df["cliente"] = ""
+
 if "valor_bruto" not in df.columns:
     df["valor_bruto"] = pd.NA
-
 if "valor_liquido" not in df.columns:
     df["valor_liquido"] = pd.NA
 
-# Conversões básicas
-df["data_ref"] = pd.to_datetime(df["data_ref"], errors="coerce")
 df["valor_bruto"] = pd.to_numeric(df["valor_bruto"], errors="coerce")
 df["valor_liquido"] = pd.to_numeric(df["valor_liquido"], errors="coerce")
 
+# Data ref igual para todas as linhas
+df["data_ref"] = pd.to_datetime(data_ref_input)
 
-# Escolha do valor de RF usando a regra:
-# - Se as duas colunas tiverem valor, usar o menor
-# - Se só uma tiver valor, usar a que não estiver vazia
-# - Se ambas vazias, considerar 0
+# ============================================================
+# Regra de escolha do valor de RF
+# ============================================================
+
 def escolher_valor_rf(row):
     vb = row["valor_bruto"]
     vl = row["valor_liquido"]
@@ -124,88 +123,48 @@ def escolher_valor_rf(row):
         return vb
     return min(vb, vl)
 
+
 df["valor_rf"] = df.apply(escolher_valor_rf, axis=1)
 
-# Descobre data de referência principal
 data_ref_unica = df["data_ref"].max()
-st.write(f"**Data de referência da posição:** {data_ref_unica.date() if pd.notna(data_ref_unica) else 'não identificada'}")
+st.write(f"**Data de referência da posição:** {data_ref_unica.date()}")
 
-# ===================================================================
-# Classificação por classe de RF
-# ===================================================================
-
-st.markdown("### Classificação por classe de Renda Fixa")
+# ============================================================
+# Classificação por classe
+# ============================================================
 
 BANCARIOS = {"CDB", "LCA", "LCI", "LC", "LIG", "LCD"}
-CREDITO_PRIVADO = {"CRA", "CRI", "CDCA", "DEBENTURES", "DEBENTURE"}
-TITULOS_PUBLICOS = {"LFT", "LTN", "NTNB", "NTNF", "NTNB-P", "NTNBP"}
+CREDITO_PRIVADO = {"CRA", "CRI", "CDCA", "DEBENTURE", "DEBÊNTURE"}
+TITULOS_PUBLICOS = {"LFT", "LTN", "NTNB", "NTNF", "NTNB-P", "NTNBP", "NTNB1"}
 BANCARIOS_EX_FGC = {"LF", "LFSN", "LFSC"}
 
 def classificar_linha(tipo_produto, nome_ativo):
     tp = str(tipo_produto).upper().strip()
     nome = str(nome_ativo).upper()
 
-    # Tesouro direto sempre pela descrição do ativo
     if "TESOURO DIRETO" in nome:
         return "Tesouro"
 
     if tp in BANCARIOS:
-        return "Bancários"
+        return "Bancário"
     if tp in CREDITO_PRIVADO:
         return "Crédito Privado"
     if tp in TITULOS_PUBLICOS:
-        return "Títulos Públicos"
+        return "TPF"
     if tp in BANCARIOS_EX_FGC:
-        return "Bancários ex-FGC"
+        return "Bancário ex-FGC"
 
-    return None  # fica para classificação manual
+    return "Outros"
 
-df["classe_auto"] = df.apply(
+
+df["classe_rf"] = df.apply(
     lambda row: classificar_linha(row["tipo_produto"], row["ativo"]),
     axis=1
 )
 
-# Produtos ainda sem classe
-produtos_sem_classe = sorted(
-    df.loc[df["classe_auto"].isna(), "tipo_produto"].dropna().unique()
-)
-
-class_map_manual = {}
-if len(produtos_sem_classe) > 0:
-    st.warning("Foram encontrados produtos sem classificação de classe. Escolha a classe para cada um.")
-    opcoes_classe = [
-        "Bancários",
-        "Crédito Privado",
-        "Títulos Públicos",
-        "Tesouro",
-        "Bancários ex-FGC",
-        "Ignorar"
-    ]
-    for p in produtos_sem_classe:
-        escolha = st.selectbox(
-            f"Classe para o produto: {p}",
-            opcoes_classe,
-            index=0,
-            key=f"class_{p}"
-        )
-        class_map_manual[p] = escolha
-
-def definir_classe_final(row):
-    if pd.notna(row["classe_auto"]):
-        return row["classe_auto"]
-    tp = row["tipo_produto"]
-    classe_manual = class_map_manual.get(tp)
-    if classe_manual is None:
-        return "Outros"
-    if classe_manual == "Ignorar":
-        return "Outros"
-    return classe_manual
-
-df["classe_rf"] = df.apply(definir_classe_final, axis=1)
-
-# ===================================================================
+# ============================================================
 # Cálculos principais
-# ===================================================================
+# ============================================================
 
 total_rf = df["valor_rf"].sum()
 contas_com_rf = df[df["valor_rf"] > 0]["conta"].nunique()
@@ -218,27 +177,24 @@ pct_rf_sobre_auc = (total_rf / auc_total_convexa * 100) if auc_total_convexa > 0
 
 st.markdown("## Visão geral")
 
+def formata_moeda(valor):
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
 m1, m2, m3 = st.columns(3)
 with m1:
     st.metric("Contas com ativos de Renda Fixa", f"{contas_com_rf}")
 with m2:
-    st.metric(
-        "AuC total em Renda Fixa",
-        f"R$ {total_rf:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    )
+    st.metric("AuC total em Renda Fixa", formata_moeda(total_rf))
 with m3:
-    st.metric(
-        "% RF sobre AuC Convexa",
-        f"{pct_rf_sobre_auc:.2f}%"
-    )
+    st.metric("% RF sobre AuC Convexa", f"{pct_rf_sobre_auc:.2f}%")
 
 st.divider()
 
 aba_prod, aba_classe, aba_hist = st.tabs(["Por produto", "Por classe", "Histórico"])
 
-# ===================================================================
+# ============================================================
 # Aba: Por produto
-# ===================================================================
+# ============================================================
 
 with aba_prod:
     st.subheader("AuC de Renda Fixa por produto")
@@ -257,9 +213,9 @@ with aba_prod:
 
     st.dataframe(
         grp_prod_sorted.style.format({
-            "auc_rf": "R$ {:,.2f}".format,
-            "pct_estoque_rf": "{:.2f}%",
-            "pct_auc_convexa": "{:.2f}%"
+            "auc_rf": lambda v: formata_moeda(v),
+            "pct_estoque_rf": "{:.2f}%".format,
+            "pct_auc_convexa": "{:.2f}%".format,
         })
     )
 
@@ -268,9 +224,9 @@ with aba_prod:
         use_container_width=True
     )
 
-# ===================================================================
+# ============================================================
 # Aba: Por classe
-# ===================================================================
+# ============================================================
 
 with aba_classe:
     st.subheader("AuC de Renda Fixa por classe")
@@ -289,9 +245,9 @@ with aba_classe:
 
     st.dataframe(
         grp_class_sorted.style.format({
-            "auc_rf": "R$ {:,.2f}".format,
-            "pct_estoque_rf": "{:.2f}%",
-            "pct_auc_convexa": "{:.2f}%"
+            "auc_rf": lambda v: formata_moeda(v),
+            "pct_estoque_rf": "{:.2f}%".format,
+            "pct_auc_convexa": "{:.2f}%".format,
         })
     )
 
@@ -300,43 +256,38 @@ with aba_classe:
         use_container_width=True
     )
 
-# ===================================================================
+# ============================================================
 # Aba: Histórico
-# ===================================================================
+# ============================================================
 
 with aba_hist:
     st.subheader("Histórico mês a mês")
 
-    # Monta resumo do dia para histórico
-    if pd.notna(data_ref_unica):
-        resumo_total = pd.DataFrame([{
-            "data_ref": data_ref_unica,
-            "tipo": "total",
-            "categoria": "RF Total",
-            "auc_rf": total_rf,
-            "auc_total_convexa": auc_total_convexa
-        }])
+    resumo_total = pd.DataFrame([{
+        "data_ref": data_ref_unica,
+        "tipo": "total",
+        "categoria": "RF Total",
+        "auc_rf": total_rf,
+        "auc_total_convexa": auc_total_convexa
+    }])
 
-        resumo_prod = grp_prod.copy()
-        resumo_prod["data_ref"] = data_ref_unica
-        resumo_prod["tipo"] = "produto"
-        resumo_prod = resumo_prod.rename(columns={"tipo_produto": "categoria"})
-        resumo_prod["auc_total_convexa"] = auc_total_convexa
-        resumo_prod = resumo_prod[["data_ref", "tipo", "categoria", "auc_rf", "auc_total_convexa"]]
+    resumo_prod = grp_prod.copy()
+    resumo_prod["data_ref"] = data_ref_unica
+    resumo_prod["tipo"] = "produto"
+    resumo_prod = resumo_prod.rename(columns={"tipo_produto": "categoria"})
+    resumo_prod["auc_total_convexa"] = auc_total_convexa
+    resumo_prod = resumo_prod[["data_ref", "tipo", "categoria", "auc_rf", "auc_total_convexa"]]
 
-        resumo_class = grp_class.copy()
-        resumo_class["data_ref"] = data_ref_unica
-        resumo_class["tipo"] = "classe"
-        resumo_class = resumo_class.rename(columns={"classe_rf": "categoria"})
-        resumo_class["auc_total_convexa"] = auc_total_convexa
-        resumo_class = resumo_class[["data_ref", "tipo", "categoria", "auc_rf", "auc_total_convexa"]]
+    resumo_class = grp_class.copy()
+    resumo_class["data_ref"] = data_ref_unica
+    resumo_class["tipo"] = "classe"
+    resumo_class = resumo_class.rename(columns={"classe_rf": "categoria"})
+    resumo_class["auc_total_convexa"] = auc_total_convexa
+    resumo_class = resumo_class[["data_ref", "tipo", "categoria", "auc_rf", "auc_total_convexa"]]
 
-        resumo_dia = pd.concat([resumo_total, resumo_prod, resumo_class], ignore_index=True)
-    else:
-        resumo_dia = None
+    resumo_dia = pd.concat([resumo_total, resumo_prod, resumo_class], ignore_index=True)
 
-    # Salva histórico se marcado
-    if salvar_historico and resumo_dia is not None:
+    if salvar_historico:
         if os.path.exists(HIST_FILE):
             hist_antigo = pd.read_parquet(HIST_FILE)
             hist_novo = pd.concat([hist_antigo, resumo_dia], ignore_index=True)
@@ -346,7 +297,6 @@ with aba_hist:
         hist_novo.to_parquet(HIST_FILE, index=False)
         st.success("Histórico atualizado com a posição atual.")
 
-    # Carrega histórico para visualização
     if os.path.exists(HIST_FILE):
         historico = pd.read_parquet(HIST_FILE)
         historico["data_ref"] = pd.to_datetime(historico["data_ref"])
@@ -356,7 +306,6 @@ with aba_hist:
 
         hist_total = historico[historico["tipo"] == "total"].groupby("mes")["auc_rf"].sum().reset_index()
         hist_total = hist_total.set_index("mes")
-
         st.line_chart(hist_total, use_container_width=True)
 
         st.markdown("#### Histórico por produto")
