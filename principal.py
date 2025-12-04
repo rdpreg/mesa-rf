@@ -204,7 +204,9 @@ with m3:
 
 st.divider()
 
-aba_prod, aba_classe, aba_hist = st.tabs(["Por produto", "Por classe", "Histórico"])
+aba_prod, aba_classe, aba_emissor, aba_hist = st.tabs(
+    ["Por produto", "Por classe", "Por emissor", "Histórico"]
+)
 
 # ============================================================
 # Aba: Por produto
@@ -269,6 +271,50 @@ with aba_classe:
         grp_class_sorted.set_index("classe_rf")["auc_rf"],
         use_container_width=True
     )
+
+# ============================================================
+# Aba: Por emissor
+# ============================================================
+
+with aba_emissor:
+    st.subheader("AuC de Renda Fixa por emissor")
+
+    if "emissor" not in df.columns:
+        st.info("A coluna 'Emissor' não foi encontrada no arquivo.")
+    else:
+        grp_emissor = (
+            df.groupby("emissor", dropna=False)["valor_rf"]
+            .sum()
+            .reset_index()
+            .rename(columns={"valor_rf": "auc_rf"})
+        )
+
+        grp_emissor["pct_estoque_rf"] = (
+            grp_emissor["auc_rf"] / total_rf * 100 if total_rf > 0 else 0.0
+        )
+        grp_emissor["pct_auc_convexa"] = (
+            grp_emissor["auc_rf"] / auc_total_convexa * 100
+            if auc_total_convexa > 0
+            else 0.0
+        )
+
+        grp_emissor_sorted = grp_emissor.sort_values("auc_rf", ascending=False)
+
+        st.dataframe(
+            grp_emissor_sorted.style.format(
+                {
+                    "auc_rf": lambda v: formata_moeda(v),
+                    "pct_estoque_rf": "{:.2f}%".format,
+                    "pct_auc_convexa": "{:.2f}%".format,
+                }
+            )
+        )
+
+        st.bar_chart(
+            grp_emissor_sorted.set_index("emissor")["auc_rf"],
+            use_container_width=True,
+        )
+
 
 # ============================================================
 # Aba: Histórico
